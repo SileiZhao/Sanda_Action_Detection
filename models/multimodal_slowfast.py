@@ -55,7 +55,7 @@ class SlowFast(nn.Module):
         self.fast_inplanes = 8
         self.fast_conv1 = nn.Conv3d(3, 8, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False)
         self.fast_bn1 = nn.BatchNorm3d(8)
-        self.fast_relu = nn.ReLU(inplace=True)
+        self.fast_relu = nn.ReLU()
         self.fast_maxpool = nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         self.fast_res2 = self._make_layer_fast(block, 8, layers[0], head_conv=3)
         self.fast_res3 = self._make_layer_fast(block, 16, layers[1], stride=2, head_conv=3)
@@ -72,10 +72,10 @@ class SlowFast(nn.Module):
                                       padding=(2, 0, 0))
 
         # Slow Path for RGB
-        self.slow_inplanes = 64 + 64 // 8 * 2
+        self.slow_inplanes = 64 + 64 // 8 * 2 + 64 * 2
         self.slow_conv1 = nn.Conv3d(3, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False)
         self.slow_bn1 = nn.BatchNorm3d(64)
-        self.slow_relu = nn.ReLU(inplace=True)
+        self.slow_relu = nn.ReLU()
         self.slow_maxpool = nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         self.slow_res2 = self._make_layer_slow(block, 64, layers[0], head_conv=1)
         self.slow_res3 = self._make_layer_slow(block, 128, layers[1], stride=2, head_conv=1)
@@ -86,31 +86,47 @@ class SlowFast(nn.Module):
         self.heatmap_inplanes = 64
         self.heatmap_conv1 = nn.Conv3d(17, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False)
         self.heatmap_bn1 = nn.BatchNorm3d(64)
-        self.heatmap_relu = nn.ReLU(inplace=True)
+        self.heatmap_relu = nn.ReLU()
         self.heatmap_maxpool = nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         self.heatmap_res2 = self._make_layer_heatmap(block, 64, layers[0], head_conv=1)
         self.heatmap_res3 = self._make_layer_heatmap(block, 128, layers[1], stride=2, head_conv=1)
         self.heatmap_res4 = self._make_layer_heatmap(block, 256, layers[2], stride=2, head_conv=3)
         self.heatmap_res5 = self._make_layer_heatmap(block, 512, layers[3], stride=1, head_conv=3)
 
+        # Lateral connections for Heatmap
+        self.lateral_p1_heatmap = nn.Conv3d(64, 64 * 2, kernel_size=(5, 1, 1), stride=(4, 1, 1), bias=False,
+                                            padding=(2, 0, 0))
+        self.lateral_res2_heatmap = nn.Conv3d(256, 256 * 2, kernel_size=(5, 1, 1), stride=(4, 1, 1), bias=False,
+                                              padding=(2, 0, 0))
+        self.lateral_res3_heatmap = nn.Conv3d(512, 512 * 2, kernel_size=(5, 1, 1), stride=(4, 1, 1), bias=False,
+                                              padding=(2, 0, 0))
+        self.lateral_res4_heatmap = nn.Conv3d(1024, 1024 * 2, kernel_size=(5, 1, 1), stride=(4, 1, 1), bias=False,
+                                              padding=(2, 0, 0))
+
         # Fusion layers
         self.fusion_fc = nn.Linear(512 * block.expansion + 2048 + 256, 1024)  # 512 (heatmap) + 2048 (slow) + 256 (fast)
         self.fc = nn.Linear(1024, class_num, bias=False)
         self.dp = nn.Dropout(dropout)
 
-    def SlowPath(self, input, lateral):  # (1, 3, 8, 256, 256)
+    def SlowPath(self, input, lateral_rgb, lateral_heatmap):  # (1, 3, 8, 256, 256)
         x = self.slow_conv1(input)  # (1, 64, 8, 128, 128)
         x = self.slow_bn1(x)  # (1, 64, 8, 128, 128)
         x = self.slow_relu(x)  # (1, 64, 8, 128, 128)
         x = self.slow_maxpool(x)  # (1, 64, 8, 64, 64)
-        x = torch.cat([x, lateral[0]], dim=1)  # (1, 80, 8, 64, 64)
+
+        # 合并 RGB 和 Heatmap 的侧向连接
+        x = torch.cat([x, lateral_rgb[0], lateral_heatmap[0]], dim=1)  # (1, 64 + 16 + 128, 8, 64, 64)
         x = self.slow_res2(x)  # (1, 256, 8, 64, 64)
-        x = torch.cat([x, lateral[1]], dim=1)  # (1, 320, 8, 64, 64)
+
+        x = torch.cat([x, lateral_rgb[1], lateral_heatmap[1]], dim=1)  # (1, 256 + 64 + 512, 8, 64, 64)
         x = self.slow_res3(x)  # (1, 512, 8, 32, 32)
-        x = torch.cat([x, lateral[2]], dim=1)  # (1, 640, 8, 32, 32)
+
+        x = torch.cat([x, lateral_rgb[2], lateral_heatmap[2]], dim=1)  # (1, 512 + 128 + 1024, 8, 32, 32)
         x = self.slow_res4(x)  # (1, 1024, 8, 16, 16)
-        x = torch.cat([x, lateral[3]], dim=1)  # (1, 1280, 8, 16, 16)
+
+        x = torch.cat([x, lateral_rgb[3], lateral_heatmap[3]], dim=1)  # (1, 1024 + 256 + 2048, 8, 16, 16)
         x = self.slow_res5(x)  # (1, 2048, 8, 16, 16)
+
         print(f"slow: {x.shape}")
         x = nn.AdaptiveAvgPool3d(1)(x)  # (1, 2048, 1, 1, 1)
         x = x.view(-1, x.size(1))  # (1, 2048)
@@ -152,31 +168,48 @@ class SlowFast(nn.Module):
         heatmap = heatmap.permute(0, 2, 1, 3, 4)
 
         # Heatmap feature extraction
+        lateral = []
         x = self.heatmap_conv1(heatmap)  # (batch_size, 64, frame_num, height//2, width//2)
         x = self.heatmap_bn1(x)
         x = self.heatmap_relu(x)
-        x = self.heatmap_maxpool(x)  # (batch_size, 64, frame_num, height//4, width//4)
-        x = self.heatmap_res2(x)  # (batch_size, 256, frame_num, height//4, width//4)
-        x = self.heatmap_res3(x)  # (batch_size, 512, frame_num, height//8, width//8)
-        x = self.heatmap_res4(x)  # (batch_size, 1024, frame_num, height//16, width//16)
-        x = self.heatmap_res5(x)  # (batch_size, 2048, frame_num, height//16, width//16)
-        print(f"Heatmap: {x.shape}")
+        pool1 = self.heatmap_maxpool(x)  # (batch_size, 64, frame_num, height//4, width//4)
+        lateral_p = self.lateral_p1_heatmap(pool1)  # (batch_size, 128, frame_num//4, height//4, width//4)
+        lateral.append(lateral_p)
+
+        res2 = self.heatmap_res2(pool1)  # (batch_size, 256, frame_num, height//4, width//4)
+        lateral_res2 = self.lateral_res2_heatmap(res2)  # (batch_size, 512, frame_num//4, height//4, width//4)
+        lateral.append(lateral_res2)
+
+        res3 = self.heatmap_res3(res2)  # (batch_size, 512, frame_num//2, height//8, width//8)
+        lateral_res3 = self.lateral_res3_heatmap(res3)  # (batch_size, 1024, frame_num//4, height//8, width//8)
+        lateral.append(lateral_res3)
+
+        res4 = self.heatmap_res4(res3)  # (batch_size, 1024, frame_num, height//16, width//16)
+        lateral_res4 = self.lateral_res4_heatmap(res4)  # (batch_size, 2048, frame_num//4, height//16, width//16)
+        lateral.append(lateral_res4)
+
+        res5 = self.heatmap_res5(res4)  # (batch_size, 2048, frame_num, height//16, width//16)
+        print(f"Heatmap: {res5.shape}")
+
         # Global average pooling
-        x = nn.AdaptiveAvgPool3d(1)(x)  # (batch_size, 2048, 1, 1, 1)
+        x = nn.AdaptiveAvgPool3d(1)(res5)  # (batch_size, 2048, 1, 1, 1)
         x = x.view(batch_size, -1)  # (batch_size, 2048)
-        return x
+
+        return x, lateral  # 返回特征和侧向连接
 
     def forward(self, input, pose):
         # RGB paths
-        fast, lateral = self.FastPath(input[:, :, ::1, :, :])
-        slow = self.SlowPath(input[:, :, ::4, :, :], lateral)
+        fast, lateral_rgb = self.FastPath(input[:, :, ::1, :, :])
 
         # Heatmap path
         heatmap = self.generate_heatmap(pose)  # Generate heatmap from pose
-        heatmap = self.HeatmapPath(heatmap)
+        heatmap_feat, lateral_heatmap = self.HeatmapPath(heatmap)
+
+        # Slow path with lateral connections from RGB and Heatmap
+        slow = self.SlowPath(input[:, :, ::4, :, :], lateral_rgb, lateral_heatmap)
 
         # Fusion
-        x = torch.cat([slow, fast, heatmap], dim=1)  # (1, 2048 + 256 + 512 * expansion)
+        x = torch.cat([slow, fast, heatmap_feat], dim=1)  # (1, 2048 + 256 + 512 * expansion)
         x = self.fusion_fc(x)  # (1, 1024)
         x = self.dp(x)
         x = self.fc(x)  # (1, num_class)
@@ -252,7 +285,7 @@ class SlowFast(nn.Module):
         for i in range(1, blocks):
             layers.append(block(self.slow_inplanes, planes, head_conv=head_conv))
 
-        self.slow_inplanes = planes * block.expansion + planes * block.expansion // 8 * 2
+        self.slow_inplanes = planes * block.expansion + planes * block.expansion // 8 * 2 + planes * block.expansion * 2
         return nn.Sequential(*layers)
 
     def _make_layer_heatmap(self, block, planes, blocks, stride=1, head_conv=1):
