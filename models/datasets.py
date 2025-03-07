@@ -6,8 +6,25 @@ from torchvision.io import read_image
 from torchvision.transforms import Compose, Resize, Normalize
 
 
+def custom_collate_fn(batch):
+    """
+    自定义 collate_fn，处理不同样本中 N 不一致的情况。
+    """
+    collated_batch = {}
+
+    # 处理图像数据
+    collated_batch["image"] = torch.stack([item["image"] for item in batch], dim=0)
+
+    # 处理 boxes、poses、labels 等字段
+    for key in ["boxes", "box_player_ids", "poses", "pose_player_ids", "labels", "label_player_ids"]:
+        # 将每个样本的字段存储为列表
+        collated_batch[key] = [item[key] for item in batch]
+
+    return collated_batch
+
+
 class SandaActionDataset(Dataset):
-    def __init__(self, root_dir, transform=None, frame_stride=1):
+    def __init__(self, root_dir, transform=None, frame_stride=1, clip_length=32):
         """
         初始化数据集。
 
@@ -15,10 +32,12 @@ class SandaActionDataset(Dataset):
             root_dir (str): 数据集根目录。
             transform (callable, optional): 图像预处理变换。
             frame_stride (int): 帧采样步长（默认为1，即使用所有帧）。
+            clip_length (int): 视频片段的帧数。
         """
         self.root_dir = root_dir
         self.transform = transform
         self.frame_stride = frame_stride
+        self.clip_length = clip_length
 
         # 加载所有视频的元数据
         self.metadata = []
@@ -39,32 +58,36 @@ class SandaActionDataset(Dataset):
 
             # 按帧存储元数据
             frame_files = sorted(os.listdir(frames_dir))
-            for i, frame_file in enumerate(frame_files):
-                if i % self.frame_stride == 0:  # 按步长采样帧
-                    frame_id = int(os.path.splitext(frame_file)[0].split("_")[-1])
-                    frame_annotations = annotations[annotations["frame_number"] == frame_id]
-                    if not frame_annotations.empty:
-                        self.metadata.append({
-                            "video_id": video_id,
-                            "frame_path": os.path.join(frames_dir, frame_file),
-                            "annotations": frame_annotations.to_dict("records"),
-                        })
+            for i in range(0, len(frame_files) - self.clip_length + 1, self.frame_stride):
+                frame_ids = [int(os.path.splitext(frame_files[j])[0].split("_")[-1]) for j in
+                             range(i, i + self.clip_length)]
+                frame_annotations = annotations[annotations["frame_number"].isin(frame_ids)]
+                if not frame_annotations.empty:
+                    self.metadata.append({
+                        "video_id": video_id,
+                        "frame_paths": [os.path.join(frames_dir, frame_files[j]) for j in
+                                        range(i, i + self.clip_length)],
+                        "annotations": frame_annotations.to_dict("records"),
+                    })
 
     def __len__(self):
         return len(self.metadata)
 
     def __getitem__(self, idx):
-        # 加载当前帧的元数据
+        # 加载当前视频片段的元数据
         metadata = self.metadata[idx]
-        frame_path = metadata["frame_path"]
+        frame_paths = metadata["frame_paths"]
         frame_annotations = metadata["annotations"]
 
-        # 加载图像
-        image = read_image(frame_path)  # 形状: (3, H, W)
-        image = image.float() / 255.0  # 归一化到 [0, 1]
-
-        if self.transform:
-            image = self.transform(image)
+        # 加载多帧图像
+        frames = []
+        for frame_path in frame_paths:
+            image = read_image(frame_path)  # 形状: (3, H, W), 类型: uint8
+            image = image.float() / 255.0  # 转换为浮点型并归一化到 [0, 1]
+            if self.transform:
+                image = self.transform(image)
+            frames.append(image)
+        frames = torch.stack(frames, dim=1)  # 形状: (3, clip_length, H, W)
 
         # 处理检测框、姿态关键点和标签
         boxes = []
@@ -100,7 +123,7 @@ class SandaActionDataset(Dataset):
 
         # 返回数据
         return {
-            "image": image,  # 图像张量
+            "image": frames,  # 图像张量: (3, clip_length, H, W)
             "boxes": boxes,  # 检测框
             "box_player_ids": box_player_ids,  # 检测框对应的运动员 ID
             "poses": poses,  # 姿态关键点
@@ -108,25 +131,3 @@ class SandaActionDataset(Dataset):
             "labels": labels,  # 动作标签
             "label_player_ids": label_player_ids,  # 标签对应的运动员 ID
         }
-
-
-if __name__ == '__main__':
-
-    # 图像预处理
-    transform = Compose([
-        Resize((256, 256)),  # 调整图像大小
-        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),  # 归一化
-    ])
-
-    # 创建数据集
-    dataset = SandaActionDataset(root_dir="../data", transform=transform, frame_stride=1)
-
-    # 测试数据集
-    sample = dataset[0]
-    print("Image shape:", sample["image"].shape)  # 图像形状: (3, 256, 256)
-    print("Boxes shape:", sample["boxes"].shape)  # 检测框形状: (N, 4)
-    print("Box player IDs:", sample["box_player_ids"])  # 检测框对应的运动员 ID
-    print("Poses shape:", sample["poses"].shape)  # 姿态关键点形状: (N, 17, 3)
-    print("Pose player IDs:", sample["pose_player_ids"])  # 姿态对应的运动员 ID
-    print("Labels:", sample["labels"])  # 动作标签
-    print("Label player IDs:", sample["label_player_ids"])  # 标签对应的运动员 ID
