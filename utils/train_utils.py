@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+import time
+from datetime import timedelta
 
 
-def merge_bboxes(bboxes):
+def merge_bboxes(bboxes, device):
     """
     将红蓝双方的 bboxes 合并为一个大的 bbox，并转换为 (K, 5) 格式。
     Args:
@@ -24,8 +26,8 @@ def merge_bboxes(bboxes):
 
     # 转换为 (K, 5) 格式，其中 K = batch_size * clip_length
     batch_indices = torch.arange(batch_size).unsqueeze(1).expand(-1, clip_length).reshape(-1)  # (K,)
-    merged_bboxes = merged_bboxes.reshape(-1, 4)  # (K, 4)
-    merged_bboxes = torch.cat([batch_indices.unsqueeze(1), merged_bboxes], dim=1)  # (K, 5)
+    merged_bboxes = merged_bboxes.reshape(-1, 4).to(device)  # (K, 4)
+    merged_bboxes = torch.cat([batch_indices.unsqueeze(1).to(device), merged_bboxes], dim=1)  # (K, 5)
 
     return merged_bboxes
 
@@ -51,15 +53,20 @@ def train(model, roi_head, train_loader, criterion, optimizer, device):
     running_loss = 0.0
     correct = 0
     total = 0
+    start_time = time.time()  # 记录训练开始时间
 
     for batch_idx, data in enumerate(tqdm(train_loader)):
+        # 记录数据加载时间
+        data_time = time.time() - start_time
+
+        # 将数据移动到设备
         inputs = data["image"].to(device)  # (batch_size, 3, clip_length, H, W)
         poses = data["poses"].to(device)  # (batch_size, clip_length, 2, 17, 3)
         bboxes = data["boxes"].to(device)  # (batch_size, clip_length, 2, 4)
         labels = data["labels"].to(device)  # (batch_size, clip_length)
 
-        # 合并 bboxes
-        bboxes = merge_bboxes(bboxes)  # (batch_size, clip_length, 4)
+        # 合并 bboxes 并转换为 (K, 5) 格式
+        bboxes = merge_bboxes(bboxes, device)  # (K, 5)
 
         # 获取序列标签
         labels = get_sequence_label(labels)  # (batch_size,)
@@ -76,6 +83,14 @@ def train(model, roi_head, train_loader, criterion, optimizer, device):
 
         # 反向传播和优化
         loss.backward()
+
+        # 计算梯度范数
+        grad_norm = 0.0
+        for param in model.parameters():
+            if param.grad is not None:
+                grad_norm += param.grad.data.norm(2).item()
+        grad_norm = grad_norm ** 0.5
+
         optimizer.step()
 
         # 统计损失和准确率
@@ -83,6 +98,38 @@ def train(model, roi_head, train_loader, criterion, optimizer, device):
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
+
+        # 计算每次迭代的时间
+        iter_time = time.time() - start_time
+
+        # 计算预计剩余时间
+        eta = (len(train_loader) - batch_idx - 1) * iter_time
+        eta = str(timedelta(seconds=int(eta)))
+
+        # 获取当前学习率
+        lr = optimizer.param_groups[0]["lr"]
+
+        # 获取 GPU 内存占用
+        if torch.cuda.is_available():
+            memory = torch.cuda.memory_allocated() / 1024 ** 2  # 转换为 MB
+        else:
+            memory = 0
+
+        # 计算当前准确率
+        acc = 100. * correct / total
+
+        # 打印训练日志
+        if (batch_idx + 1) % 10 == 0:  # 每 10 个迭代打印一次日志
+            print(
+                f"{time.strftime('%Y/%m/%d %H:%M:%S')} - INFO - "
+                f"Epoch(train) [{epoch}][{batch_idx + 1}/{len(train_loader)}]  "
+                f"lr: {lr:.4e}  eta: {eta}  time: {iter_time:.4f}  "
+                f"data_time: {data_time:.4f}  memory: {memory:.0f}  "
+                f"grad_norm: {grad_norm:.4f}  loss: {loss.item():.4f}  acc: {acc:.4f}%"
+            )
+
+        # 重置计时器
+        start_time = time.time()
 
     # 计算平均损失和准确率
     train_loss = running_loss / len(train_loader)
@@ -96,16 +143,21 @@ def test(model, roi_head, test_loader, criterion, device):
     running_loss = 0.0
     correct = 0
     total = 0
+    start_time = time.time()  # 记录测试开始时间
 
     with torch.no_grad():
-        for data in tqdm(test_loader):
+        for batch_idx, data in enumerate(tqdm(test_loader)):
+            # 记录数据加载时间
+            data_time = time.time() - start_time
+
+            # 将数据移动到设备
             inputs = data["image"].to(device)  # (batch_size, 3, clip_length, H, W)
             poses = data["poses"].to(device)  # (batch_size, clip_length, 2, 17, 3)
             bboxes = data["boxes"].to(device)  # (batch_size, clip_length, 2, 4)
             labels = data["labels"].to(device)  # (batch_size, clip_length)
 
-            # 合并 bboxes
-            bboxes = merge_bboxes(bboxes)  # (batch_size, clip_length, 4)
+            # 合并 bboxes 并转换为 (K, 5) 格式
+            bboxes = merge_bboxes(bboxes, device)  # (K, 5)
 
             # 获取序列标签
             labels = get_sequence_label(labels)  # (batch_size,)
@@ -122,6 +174,35 @@ def test(model, roi_head, test_loader, criterion, device):
             _, predicted = outputs.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
+
+            # 计算每次迭代的时间
+            iter_time = time.time() - start_time
+
+            # 计算预计剩余时间
+            eta = (len(test_loader) - batch_idx - 1) * iter_time
+            eta = str(timedelta(seconds=int(eta)))
+
+            # 获取 GPU 内存占用
+            if torch.cuda.is_available():
+                memory = torch.cuda.memory_allocated() / 1024 ** 2  # 转换为 MB
+            else:
+                memory = 0
+
+            # 计算当前准确率
+            acc = 100. * correct / total
+
+            # 打印测试日志
+            if (batch_idx + 1) % 10 == 0:  # 每 10 个迭代打印一次日志
+                print(
+                    f"{time.strftime('%Y/%m/%d %H:%M:%S')} - INFO - "
+                    f"Epoch(test) [{epoch}][{batch_idx + 1}/{len(test_loader)}]  "
+                    f"eta: {eta}  time: {iter_time:.4f}  "
+                    f"data_time: {data_time:.4f}  memory: {memory:.0f}  "
+                    f"loss: {loss.item():.4f}  acc: {acc:.2f}%"
+                )
+
+            # 重置计时器
+            start_time = time.time()
 
     # 计算平均损失和准确率
     test_loss = running_loss / len(test_loader)

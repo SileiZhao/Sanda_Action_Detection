@@ -5,7 +5,7 @@ import torch
 class Config:
     def __init__(self):
         # 数据集路径
-        self.DATA_ROOT = "/Users/zhaosilei/PycharmProjects/Benz/Sanda_Action_Detection/mini_data"
+        self.DATA_ROOT = "data"
 
         # 训练参数
         self.BATCH_SIZE = 1
