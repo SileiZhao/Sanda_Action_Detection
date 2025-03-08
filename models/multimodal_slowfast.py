@@ -128,8 +128,8 @@ class SlowFast(nn.Module):
         x = self.slow_res5(x)  # (1, 2048, 8, 16, 16)
 
         # print(f"slow: {x.shape}")
-        x = nn.AdaptiveAvgPool3d(1)(x)  # (1, 2048, 1, 1, 1)
-        x = x.view(-1, x.size(1))  # (1, 2048)
+        # x = nn.AdaptiveAvgPool3d(1)(x)  # (1, 2048, 1, 1, 1)
+        # x = x.view(-1, x.size(1))  # (1, 2048)
         return x
 
     def FastPath(self, input):  # (1, 3, 32, 256, 256)
@@ -155,10 +155,10 @@ class SlowFast(nn.Module):
 
         res5 = self.fast_res5(res4)  # (1, 256, 32, 16, 16)
         # print(f"fast: {res5.shape}")
-        x = nn.AdaptiveAvgPool3d(1)(res5)  # (1, 256, 1, 1, 1)
-        x = x.view(-1, x.size(1))  # (1, 256)
+        # x = nn.AdaptiveAvgPool3d(1)(res5)  # (1, 256, 1, 1, 1)
+        # x = x.view(-1, x.size(1))  # (1, 256)
 
-        return x, lateral  # lateral: [(1, 16, 8, 64, 64), (1, 64, 8, 64, 64), (1, 128, 8, 32, 32), (1, 256, 8, 16, 16)]
+        return res5, lateral  # lateral: [(1, 16, 8, 64, 64), (1, 64, 8, 64, 64), (1, 128, 8, 32, 32), (1, 256, 8, 16, 16)]
 
     def HeatmapPath(self, heatmap):
         # heatmap shape: (batch_size, frame_num, num_joints, height, width)
@@ -192,10 +192,10 @@ class SlowFast(nn.Module):
         # print(f"Heatmap: {res5.shape}")
 
         # Global average pooling
-        x = nn.AdaptiveAvgPool3d(1)(res5)  # (batch_size, 2048, 1, 1, 1)
-        x = x.view(batch_size, -1)  # (batch_size, 2048)
+        # x = nn.AdaptiveAvgPool3d(1)(res5)  # (batch_size, 2048, 1, 1, 1)
+        # x = x.view(batch_size, -1)  # (batch_size, 2048)
 
-        return x, lateral  # 返回特征和侧向连接
+        return res5, lateral  # 返回特征和侧向连接
 
     def forward(self, input, pose):
         # RGB paths
@@ -209,11 +209,11 @@ class SlowFast(nn.Module):
         slow = self.SlowPath(input[:, :, ::4, :, :], lateral_rgb, lateral_heatmap)
 
         # Fusion
-        x = torch.cat([slow, fast, heatmap_feat], dim=1)  # (1, 2048 + 256 + 512 * expansion)
-        x = self.fusion_fc(x)  # (1, 1024)
-        x = self.dp(x)
-        x = self.fc(x)  # (1, num_class)
-        return x
+        # x = torch.cat([slow, fast, heatmap_feat], dim=1)  # (1, 2048 + 256 + 512 * expansion)
+        # x = self.fusion_fc(x)  # (1, 1024)
+        # x = self.dp(x)
+        # x = self.fc(x)  # (1, num_class)
+        return fast, heatmap_feat, slow
 
     def generate_heatmap(self, pose):
         # pose shape: (batch_size, frame_num, N, 17, 3)
@@ -314,4 +314,6 @@ if __name__ == '__main__':
     rgb = torch.autograd.Variable(torch.randn(1, 3, 32, 256, 256))
     pose = torch.autograd.Variable(torch.randn(1, 32, 2, 17, 3))
     out = model(rgb, pose)
-    print(out.shape)
+    print(out[0].shape)
+    print(out[1].shape)
+    print(out[2].shape)
