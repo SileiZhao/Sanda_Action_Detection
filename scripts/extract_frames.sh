@@ -2,8 +2,8 @@
 # 该脚本用于视频抽帧
 
 # 定义输入和输出目录
-input_dir="/home/zhaosilei/Projects/PycharmProjects/Sanda_Action_Detection/data/videos"
-output_dir="/home/zhaosilei/Projects/PycharmProjects/Sanda_Action_Detection/data/rawframes"
+input_dir="/Users/zhaosilei/PycharmProjects/Benz/Sanda_Action_Detection/mini_data/videos"
+output_dir="/Users/zhaosilei/PycharmProjects/Benz/Sanda_Action_Detection/mini_data/rawframes"
 
 # 创建输出目录（如果不存在）
 mkdir -p "$output_dir"

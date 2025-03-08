@@ -1,7 +1,6 @@
 """
 该脚本用于生成bbox和keypoints标注
 """
-
 from ultralytics import YOLO
 import os
 import cv2
@@ -13,13 +12,12 @@ from mmpose.structures import merge_data_samples
 from mmpose.apis import init_model as init_pose_estimator
 
 # 定义路径
-video_folder = '/home/zhaosilei/Projects/PycharmProjects/Sanda_Action_Detection/data'
-# csv_out_path = '/home/zhaosilei/Projects/PycharmProjects/Sanda_Action_Detection/output'
-det_checkpoint = '/home/zhaosilei/Projects/PycharmProjects/Sanda_Action_Detection/checkpoints/sanda_red_blue_det.pt'
-pose_config = '/home/zhaosilei/Projects/PycharmProjects/mmlab/mmpose-1.3.1/configs/body_2d_keypoint/rtmpose/body8/rtmpose-l_8xb256-420e_body8-256x192.py'
-pose_checkpoint = '/home/zhaosilei/Projects/PycharmProjects/mmlab/mmpose-1.3.1/checkpoints/rtmpose-l_simcc-body7_pt-body7_420e-256x192-4dba18fc_20230504.pth'
+video_folder = '/Users/zhaosilei/PycharmProjects/Benz/Sanda_Action_Detection/data'
+det_checkpoint = '/Users/zhaosilei/PycharmProjects/Benz/Sanda_Action_Detection/exp/runs/detect/train/weights/best.pt'
+pose_config = '/Users/zhaosilei/PycharmProjects/Benz/mmpose-main/configs/body_2d_keypoint/rtmpose/body8/rtmpose-l_8xb256-420e_body8-256x192.py'
+pose_checkpoint = '/Users/zhaosilei/PycharmProjects/Benz/mmpose-main/checkoints/rtmpose-l_simcc-body7_pt-body7_420e-256x192-4dba18fc_20230504.pth'
 
-output_folder = '/home/zhaosilei/Projects/PycharmProjects/Sanda_Action_Detection/output'
+output_folder = '/Users/zhaosilei/PycharmProjects/Benz/Sanda_Action_Detection/output'
 
 # 创建输出文件夹
 os.makedirs(output_folder, exist_ok=True)
@@ -28,7 +26,7 @@ os.makedirs(output_folder, exist_ok=True)
 detector = YOLO(det_checkpoint)
 
 # 初始化姿态估计器
-pose_estimator = init_pose_estimator(pose_config, pose_checkpoint, device='cuda:0')
+pose_estimator = init_pose_estimator(pose_config, pose_checkpoint, device='cpu')
 
 
 def process_video(video_path, csv_path):

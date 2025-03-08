@@ -127,7 +127,7 @@ class SlowFast(nn.Module):
         x = torch.cat([x, lateral_rgb[3], lateral_heatmap[3]], dim=1)  # (1, 1024 + 256 + 2048, 8, 16, 16)
         x = self.slow_res5(x)  # (1, 2048, 8, 16, 16)
 
-        print(f"slow: {x.shape}")
+        # print(f"slow: {x.shape}")
         x = nn.AdaptiveAvgPool3d(1)(x)  # (1, 2048, 1, 1, 1)
         x = x.view(-1, x.size(1))  # (1, 2048)
         return x
@@ -154,7 +154,7 @@ class SlowFast(nn.Module):
         lateral.append(lateral_res4)
 
         res5 = self.fast_res5(res4)  # (1, 256, 32, 16, 16)
-        print(f"fast: {res5.shape}")
+        # print(f"fast: {res5.shape}")
         x = nn.AdaptiveAvgPool3d(1)(res5)  # (1, 256, 1, 1, 1)
         x = x.view(-1, x.size(1))  # (1, 256)
 
@@ -189,7 +189,7 @@ class SlowFast(nn.Module):
         lateral.append(lateral_res4)
 
         res5 = self.heatmap_res5(res4)  # (batch_size, 2048, frame_num, height//16, width//16)
-        print(f"Heatmap: {res5.shape}")
+        # print(f"Heatmap: {res5.shape}")
 
         # Global average pooling
         x = nn.AdaptiveAvgPool3d(1)(res5)  # (batch_size, 2048, 1, 1, 1)

@@ -6,23 +6,6 @@ from torchvision.io import read_image
 from torchvision.transforms import Compose, Resize, Normalize
 
 
-def custom_collate_fn(batch):
-    """
-    自定义 collate_fn，处理不同样本中 N 不一致的情况。
-    """
-    collated_batch = {}
-
-    # 处理图像数据
-    collated_batch["image"] = torch.stack([item["image"] for item in batch], dim=0)
-
-    # 处理 boxes、poses、labels 等字段
-    for key in ["boxes", "box_player_ids", "poses", "pose_player_ids", "labels", "label_player_ids"]:
-        # 将每个样本的字段存储为列表
-        collated_batch[key] = [item[key] for item in batch]
-
-    return collated_batch
-
-
 class SandaActionDataset(Dataset):
     def __init__(self, root_dir, transform=None, frame_stride=1, clip_length=32):
         """
@@ -89,45 +72,70 @@ class SandaActionDataset(Dataset):
             frames.append(image)
         frames = torch.stack(frames, dim=1)  # 形状: (3, clip_length, H, W)
 
-        # 处理检测框、姿态关键点和标签
-        boxes = []
-        box_player_ids = []
-        poses = []
-        pose_player_ids = []
-        labels = []
-        label_player_ids = []
+        # 初始化红蓝双方的目标检测框和姿态关键点
+        num_frames = len(frame_paths)
+        boxes = torch.zeros((num_frames, 2, 4), dtype=torch.float32)  # 形状: (clip_length, 2, 4)
+        poses = torch.zeros((num_frames, 2, 17, 3), dtype=torch.float32)  # 形状: (clip_length, 2, 17, 3)
+        labels = torch.zeros((num_frames,), dtype=torch.int64)  # 形状: (clip_length,)
+        box_player_ids = torch.zeros((num_frames, 2), dtype=torch.int64)  # 形状: (clip_length, 2)
+        pose_player_ids = torch.zeros((num_frames, 2), dtype=torch.int64)  # 形状: (clip_length, 2)
+        label_player_ids = torch.zeros((num_frames, 2), dtype=torch.int64)  # 形状: (clip_length, 2)
 
+        # 填充红蓝双方的信息
         for ann in frame_annotations:
-            # 检测框
-            boxes.append([ann["x1"], ann["y1"], ann["x2"], ann["y2"]])
-            box_player_ids.append(ann["athlete_id"])
+            frame_idx = ann["frame_number"] - int(os.path.splitext(frame_paths[0])[0].split("_")[-1])
+            athlete_id = ann["athlete_id"]
 
-            # 姿态关键点
+            # 确保 athlete_id 是 0（红方）或 1（蓝方）
+            if athlete_id not in [0, 1]:
+                continue
+
+            # 填充目标检测框
+            boxes[frame_idx, athlete_id] = torch.tensor([ann["x1"], ann["y1"], ann["x2"], ann["y2"]])
+
+            # 填充姿态关键点
             keypoints = []
             for i in range(1, 18):
                 keypoints.append([ann[f"p{i}x"], ann[f"p{i}y"], ann[f"p{i}s"]])
-            poses.append(keypoints)
-            pose_player_ids.append(ann["athlete_id"])
+            poses[frame_idx, athlete_id] = torch.tensor(keypoints)
 
-            # 动作标签
-            labels.append(ann["label"])
-            label_player_ids.append(ann["athlete_id"])
+            # 填充动作标签（由于红蓝方标签一致，只保留一个）
+            labels[frame_idx] = ann["label"]
 
-        # 转换为张量
-        boxes = torch.tensor(boxes, dtype=torch.float32)  # 形状: (N, 4)
-        box_player_ids = torch.tensor(box_player_ids, dtype=torch.int64)  # 形状: (N,)
-        poses = torch.tensor(poses, dtype=torch.float32)  # 形状: (N, 17, 3)
-        pose_player_ids = torch.tensor(pose_player_ids, dtype=torch.int64)  # 形状: (N,)
-        labels = torch.tensor(labels, dtype=torch.int64)  # 形状: (N,)
-        label_player_ids = torch.tensor(label_player_ids, dtype=torch.int64)  # 形状: (N,)
+            # 填充运动员 ID
+            box_player_ids[frame_idx, athlete_id] = athlete_id
+            pose_player_ids[frame_idx, athlete_id] = athlete_id
+            label_player_ids[frame_idx, athlete_id] = athlete_id
 
         # 返回数据
         return {
             "image": frames,  # 图像张量: (3, clip_length, H, W)
-            "boxes": boxes,  # 检测框
-            "box_player_ids": box_player_ids,  # 检测框对应的运动员 ID
-            "poses": poses,  # 姿态关键点
-            "pose_player_ids": pose_player_ids,  # 姿态对应的运动员 ID
-            "labels": labels,  # 动作标签
-            "label_player_ids": label_player_ids,  # 标签对应的运动员 ID
+            "boxes": boxes,  # 检测框: (clip_length, 2, 4)
+            "box_player_ids": box_player_ids,  # 检测框对应的运动员 ID: (clip_length, 2)
+            "poses": poses,  # 姿态关键点: (clip_length, 2, 17, 3)
+            "pose_player_ids": pose_player_ids,  # 姿态对应的运动员 ID: (clip_length, 2)
+            "labels": labels,  # 动作标签: (clip_length,)
+            "label_player_ids": label_player_ids,  # 标签对应的运动员 ID: (clip_length, 2)
         }
+
+
+if __name__ == '__main__':
+    root_dir = '../mini_data'
+
+    transform = Compose([
+        Resize((256, 256)),
+        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    dataset = SandaActionDataset(root_dir=root_dir, transform=transform)
+
+    sample = dataset[0]
+    print(sample)
+    print(sample["image"].shape)
+    print(sample["boxes"].shape)
+    print(sample["box_player_ids"].shape)
+    print(sample["poses"].shape)
+    print(sample["pose_player_ids"].shape)
+    print(sample["labels"].shape)
+    print(sample["label_player_ids"].shape)
+
