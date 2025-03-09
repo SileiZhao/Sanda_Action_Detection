@@ -8,7 +8,7 @@ class Config:
         self.DATA_ROOT = "data"
 
         # 训练参数
-        self.BATCH_SIZE = 1
+        self.BATCH_SIZE = 16
         self.NUM_EPOCHS = 50
         self.LEARNING_RATE = 0.001
         self.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

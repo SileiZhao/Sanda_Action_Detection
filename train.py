@@ -52,14 +52,14 @@ def main():
         print(f"Epoch {epoch}/{config.NUM_EPOCHS}")
 
         # 训练
-        train_loss, train_acc = train(model, roi_head, train_loader, criterion, optimizer, config.DEVICE)
+        train_loss, train_acc = train(model, roi_head, train_loader, criterion, optimizer, config.DEVICE, epoch)
 
         # 打印训练结果
         print(f"Train Loss: {train_loss:.6f}, Train Acc: {train_acc:.2f}%")
 
         # 每 TEST_INTERVAL 轮进行一次测试
         if epoch % config.TEST_INTERVAL == 0:
-            test_loss, test_acc = test(model, roi_head, test_loader, criterion, config.DEVICE)
+            test_loss, test_acc = test(model, roi_head, test_loader, criterion, config.DEVICE, epoch)
 
             # 打印测试结果
             print(f"Test Loss: {test_loss:.6f}, Test Acc: {test_acc:.2f}%")

@@ -47,7 +47,8 @@ def get_sequence_label(labels):
     return sequence_labels
 
 
-def train(model, roi_head, train_loader, criterion, optimizer, device):
+def train(model, roi_head, train_loader, criterion, optimizer, device, epoch):
+
     model.train()
     roi_head.train()
     running_loss = 0.0
@@ -55,7 +56,7 @@ def train(model, roi_head, train_loader, criterion, optimizer, device):
     total = 0
     start_time = time.time()  # 记录训练开始时间
 
-    for batch_idx, data in enumerate(tqdm(train_loader)):
+    for batch_idx, data in enumerate(train_loader):
         # 记录数据加载时间
         data_time = time.time() - start_time
 
@@ -137,7 +138,7 @@ def train(model, roi_head, train_loader, criterion, optimizer, device):
     return train_loss, train_acc
 
 
-def test(model, roi_head, test_loader, criterion, device):
+def test(model, roi_head, test_loader, criterion, device, epoch):
     model.eval()
     roi_head.eval()
     running_loss = 0.0
@@ -146,7 +147,7 @@ def test(model, roi_head, test_loader, criterion, device):
     start_time = time.time()  # 记录测试开始时间
 
     with torch.no_grad():
-        for batch_idx, data in enumerate(tqdm(test_loader)):
+        for batch_idx, data in enumerate(test_loader):
             # 记录数据加载时间
             data_time = time.time() - start_time
 
